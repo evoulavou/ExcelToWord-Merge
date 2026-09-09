@@ -183,7 +183,15 @@ def create_documents():
                 data[header] = clean_value(
                     row[i]
                 ).strip()
+            # Αυτόματη επιλογή "του" ή "της" ανάλογα με το φύλο
+            fylo = data.get("ΦΥΛΟ", "").strip().upper()
 
+            if fylo == "Α":
+                data["ΤΟΥ/ΤΗΣ"] = "του"
+            elif fylo == "Γ":
+                data["ΤΟΥ/ΤΗΣ"] = "της"
+            else:
+                data["ΤΟΥ/ΤΗΣ"] = "του/της"
             # Δημιουργούμε αυτόματα τα placeholders
             #
             # π.χ.
