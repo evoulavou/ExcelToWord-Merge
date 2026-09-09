@@ -123,6 +123,12 @@ def create_documents():
                 for header, value in data.items()
                 if header
             }
+            # Προσθήκη κενών στα στοιχεία του εκπαιδευτικού
+            for field in ["ΕΠΩΝΥΜΟ", "ΟΝΟΜΑ", "ΠΑΤΡΩΝΥΜΟ", "ΚΛΑΔΟΣ"]:
+                placeholder = f"[{field}]"
+
+                if placeholder in replacements:
+                   replacements[placeholder] = f" {replacements[placeholder]} "
 
             doc = Document(template_path)
             replace_everywhere(doc, replacements)
