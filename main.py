@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from openpyxl import load_workbook
-from docx import Document
+import win32com.client as win32
 
 
 def choose_excel():
@@ -34,69 +34,56 @@ def choose_output():
 
 
 def clean_value(value):
-    """
-    Μετατρέπει τις τιμές του Excel σε κείμενο.
-    Οι ημερομηνίες εμφανίζονται ως ΗΗ/ΜΜ/ΕΕΕΕ.
-    """
     if value is None:
         return ""
 
     if hasattr(value, "strftime"):
         return value.strftime("%d/%m/%Y")
 
-    # Αποφυγή π.χ. 111111.0 όταν το Excel έχει αριθμό
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
 
     return str(value)
 
 
-def replace_in_paragraph(paragraph, replacements):
-    full_text = paragraph.text
-
-    for placeholder, value in replacements.items():
-        full_text = full_text.replace(placeholder, str(value))
-
-    if full_text != paragraph.text:
-        paragraph.text = full_text
-
-
-def replace_everywhere(doc, replacements):
-    """
-    Αντικατάσταση placeholders σε:
-    - κύριο κείμενο
-    - πίνακες
-    - κεφαλίδες
-    - υποσέλιδα
-    """
-
-    # Κύριο κείμενο
-    for paragraph in doc.paragraphs:
-        replace_in_paragraph(paragraph, replacements)
-
-    # Πίνακες
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    replace_in_paragraph(paragraph, replacements)
-
-    # Headers / Footers
-    for section in doc.sections:
-
-        for paragraph in section.header.paragraphs:
-            replace_in_paragraph(paragraph, replacements)
-
-        for paragraph in section.footer.paragraphs:
-            replace_in_paragraph(paragraph, replacements)
-
-
 def safe_filename(text):
-    """
-    Αφαιρεί χαρακτήρες που δεν επιτρέπονται
-    στα ονόματα αρχείων των Windows.
-    """
     return re.sub(r'[<>:"/\\|?*]', "_", text)
+
+
+def replace_word_text(doc, placeholder, value):
+    """
+    Χρησιμοποιεί το ίδιο το Microsoft Word για Find & Replace.
+    Έτσι διατηρούνται μορφοποίηση, στοίχιση, κενά κτλ.
+    """
+
+    for story_range in doc.StoryRanges:
+
+        current_range = story_range
+
+        while current_range is not None:
+
+            find = current_range.Find
+
+            find.ClearFormatting()
+            find.Replacement.ClearFormatting()
+
+            find.Text = placeholder
+            find.Replacement.Text = str(value)
+
+            find.Forward = True
+            find.Wrap = 1
+            find.Format = False
+            find.MatchCase = False
+            find.MatchWholeWord = False
+
+            find.Execute(
+                Replace=2
+            )
+
+            try:
+                current_range = current_range.NextStoryRange
+            except:
+                current_range = None
 
 
 def create_documents():
@@ -112,6 +99,8 @@ def create_documents():
         )
         return
 
+    word = None
+
     try:
 
         wb = load_workbook(
@@ -121,11 +110,15 @@ def create_documents():
 
         ws = wb.active
 
-        # Διαβάζουμε τις επικεφαλίδες της πρώτης γραμμής
         headers = [
             clean_value(cell.value).strip()
             for cell in ws[1]
         ]
+
+        word = win32.DispatchEx("Word.Application")
+
+        word.Visible = False
+        word.DisplayAlerts = False
 
         created = 0
 
@@ -137,7 +130,6 @@ def create_documents():
             start=2
         ):
 
-            # Αγνοούμε εντελώς κενές γραμμές
             if all(value is None for value in row):
                 continue
 
@@ -152,28 +144,21 @@ def create_documents():
 
                 data[header] = clean_value(row[i])
 
-            # Δημιουργούμε αυτόματα τα placeholders.
-            #
-            # Π.χ.
-            # Excel: ΕΠΩΝΥΜΟ
-            # Word: [ΕΠΩΝΥΜΟ]
-            replacements = {
-                f"[{header}]": value
-                for header, value in data.items()
-            }
-
-            # Φορτώνουμε νέο αντίγραφο του template
-            # για κάθε εκπαιδευτικό
-            doc = Document(template_path)
-
-            replace_everywhere(
-                doc,
-                replacements
+            # Ανοίγουμε κάθε φορά το αρχικό template
+            doc = word.Documents.Open(
+                os.path.abspath(template_path)
             )
 
-            # ------------------------------
-            # Όνομα αρχείου
-            # ------------------------------
+            # Αντικατάσταση όλων των placeholders
+            for header, value in data.items():
+
+                placeholder = f"[{header}]"
+
+                replace_word_text(
+                    doc,
+                    placeholder,
+                    value
+                )
 
             surname = data.get(
                 "ΕΠΩΝΥΜΟ",
@@ -203,20 +188,29 @@ def create_documents():
 
             filename = safe_filename(
                 filename
+            ) + ".docx"
+
+            output_path = os.path.abspath(
+                os.path.join(
+                    output_folder,
+                    filename
+                )
             )
 
-            filename += ".docx"
-
-            output_path = os.path.join(
-                output_folder,
-                filename
+            # 16 = DOCX
+            doc.SaveAs2(
+                output_path,
+                FileFormat=16
             )
 
-            doc.save(
-                output_path
+            doc.Close(
+                SaveChanges=False
             )
 
             created += 1
+
+        word.Quit()
+        word = None
 
         messagebox.showinfo(
             "Ολοκληρώθηκε",
@@ -224,6 +218,12 @@ def create_documents():
         )
 
     except Exception as e:
+
+        if word is not None:
+            try:
+                word.Quit()
+            except:
+                pass
 
         messagebox.showerror(
             "Σφάλμα",
@@ -265,9 +265,7 @@ tk.Label(
 )
 
 
-frame = tk.Frame(
-    root
-)
+frame = tk.Frame(root)
 
 frame.pack(
     fill="x",
@@ -275,7 +273,6 @@ frame.pack(
 )
 
 
-# Excel
 tk.Button(
     frame,
     text="Επιλογή Excel",
@@ -298,7 +295,6 @@ tk.Entry(
 )
 
 
-# Word
 tk.Button(
     frame,
     text="Επιλογή Word Template",
@@ -321,7 +317,6 @@ tk.Entry(
 )
 
 
-# Output
 tk.Button(
     frame,
     text="Φάκελος αποθήκευσης",
@@ -344,7 +339,6 @@ tk.Entry(
 )
 
 
-# Δημιουργία
 tk.Button(
     root,
     text="ΔΗΜΙΟΥΡΓΙΑ ΕΓΓΡΑΦΩΝ",
