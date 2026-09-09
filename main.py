@@ -251,6 +251,29 @@ def create_documents():
             doc.save(
                 output_path
             )
+                        # Δημιουργία PDF
+            pdf_filename = os.path.splitext(filename)[0] + ".pdf"
+
+            pdf_path = os.path.join(
+                pdf_folder,
+                pdf_filename
+            )
+
+            word_app = win32com.client.DispatchEx("Word.Application")
+            word_app.Visible = False
+            word_app.DisplayAlerts = False
+
+            word_doc = word_app.Documents.Open(
+                os.path.abspath(output_path)
+            )
+
+            word_doc.ExportAsFixedFormat(
+                os.path.abspath(pdf_path),
+                17
+            )
+
+            word_doc.Close(False)
+            word_app.Quit()
 
             created += 1
 
