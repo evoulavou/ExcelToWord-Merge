@@ -240,7 +240,7 @@ def create_documents():
             ) + ".docx"
 
             output_path = os.path.join(
-                output_folder,
+                word_folder,
                 filename
             )
 
