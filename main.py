@@ -4,10 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from openpyxl import load_workbook
-import win32com.client as win32
-
-
-VERSION = "v4"
+from docx import Document
 
 
 def choose_excel():
@@ -37,6 +34,10 @@ def choose_output():
 
 
 def clean_value(value):
+    """
+    Μετατρέπει τις τιμές του Excel σε κείμενο.
+    Οι ημερομηνίες εμφανίζονται ως ΗΗ/ΜΜ/ΕΕΕΕ.
+    """
     if value is None:
         return ""
 
@@ -50,74 +51,67 @@ def clean_value(value):
 
 
 def safe_filename(text):
+    """
+    Καθαρίζει χαρακτήρες που δεν επιτρέπονται
+    σε ονόματα αρχείων Windows.
+    """
     return re.sub(r'[<>:"/\\|?*]', "_", text)
 
 
-def replace_exact_in_range(word_range, placeholder, value):
+def replace_in_paragraph(paragraph, replacements):
     """
-    Βρίσκει το placeholder και αντικαθιστά ΜΟΝΟ
-    το συγκεκριμένο εύρος χαρακτήρων.
+    Αντικατάσταση placeholders μέσα σε paragraph.
     """
 
-    search_range = word_range.Duplicate
+    for run in paragraph.runs:
+        for placeholder, value in replacements.items():
+            if placeholder in run.text:
+                run.text = run.text.replace(
+                    placeholder,
+                    str(value)
+                )
 
-    while True:
-        find = search_range.Find
 
-        find.ClearFormatting()
-        find.Text = placeholder
-        find.Forward = True
-        find.Wrap = 0
-        find.Format = False
-        find.MatchCase = True
-        find.MatchWholeWord = False
-        find.MatchWildcards = False
+def replace_everywhere(doc, replacements):
+    """
+    Αντικατάσταση placeholders σε όλο το Word:
+    - κύριο κείμενο
+    - πίνακες
+    - headers
+    - footers
+    """
 
-        found = find.Execute()
-
-        if not found:
-            break
-
-        # Μετά το Find, το search_range είναι ακριβώς
-        # πάνω στο κείμενο που βρέθηκε.
-        search_range.Text = str(value)
-
-        # Συνεχίζουμε την αναζήτηση μετά την αντικατάσταση
-        new_start = search_range.End
-
-        search_range.SetRange(
-            Start=new_start,
-            End=word_range.End
+    # Κύριο κείμενο
+    for paragraph in doc.paragraphs:
+        replace_in_paragraph(
+            paragraph,
+            replacements
         )
 
-
-def replace_word_text(doc, placeholder, value):
-
-    # Κυρίως σώμα
-    replace_exact_in_range(
-        doc.Content,
-        placeholder,
-        value
-    )
+    # Πίνακες
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_in_paragraph(
+                        paragraph,
+                        replacements
+                    )
 
     # Headers / Footers
-    for section in doc.Sections:
+    for section in doc.sections:
 
-        for header in section.Headers:
-            if header.Exists:
-                replace_exact_in_range(
-                    header.Range,
-                    placeholder,
-                    value
-                )
+        for paragraph in section.header.paragraphs:
+            replace_in_paragraph(
+                paragraph,
+                replacements
+            )
 
-        for footer in section.Footers:
-            if footer.Exists:
-                replace_exact_in_range(
-                    footer.Range,
-                    placeholder,
-                    value
-                )
+        for paragraph in section.footer.paragraphs:
+            replace_in_paragraph(
+                paragraph,
+                replacements
+            )
 
 
 def create_documents():
@@ -133,8 +127,6 @@ def create_documents():
         )
         return
 
-    word = None
-
     try:
 
         wb = load_workbook(
@@ -144,6 +136,7 @@ def create_documents():
 
         ws = wb.active
 
+        # Πρώτη γραμμή = επικεφαλίδες
         headers = [
             clean_value(cell.value).strip()
             for cell in ws[1]
@@ -151,16 +144,8 @@ def create_documents():
 
         if not any(headers):
             raise Exception(
-                "Δεν βρέθηκαν επικεφαλίδες "
-                "στην πρώτη γραμμή του Excel."
+                "Δεν βρέθηκαν επικεφαλίδες στην πρώτη γραμμή του Excel."
             )
-
-        word = win32.DispatchEx(
-            "Word.Application"
-        )
-
-        word.Visible = False
-        word.DisplayAlerts = False
 
         created = 0
 
@@ -172,6 +157,7 @@ def create_documents():
             start=2
         ):
 
+            # Αγνοούμε τελείως κενές γραμμές
             if all(value is None for value in row):
                 continue
 
@@ -190,41 +176,30 @@ def create_documents():
                     row[i]
                 ).strip()
 
-            doc = word.Documents.Open(
-                os.path.abspath(template_path),
-                ReadOnly=False
+            # Δημιουργούμε αυτόματα τα placeholders
+            #
+            # π.χ.
+            # Excel: ΕΠΩΝΥΜΟ
+            # Word: [ΕΠΩΝΥΜΟ]
+            replacements = {
+                f"[{header}]": value
+                for header, value in data.items()
+            }
+
+            # Ανοίγουμε νέο αντίγραφο του template
+            doc = Document(
+                template_path
             )
 
-            # ---------------------------------------
-            # ΑΝΤΙΚΑΤΑΣΤΑΣΗ PLACEHOLDERS
-            # ---------------------------------------
+            # Αντικατάσταση
+            replace_everywhere(
+                doc,
+                replacements
+            )
 
-            for header, value in data.items():
-
-                placeholder = f"[{header}]"
-
-                replace_word_text(
-                    doc,
-                    placeholder,
-                    value
-                )
-
-            # ---------------------------------------
-            # ΕΛΕΓΧΟΣ
-            # ---------------------------------------
-
-            remaining = []
-
-            for header in data:
-
-                placeholder = f"[{header}]"
-
-                if placeholder in doc.Content.Text:
-                    remaining.append(placeholder)
-
-            # ---------------------------------------
-            # ΟΝΟΜΑ ΑΡΧΕΙΟΥ
-            # ---------------------------------------
+            # -------------------------
+            # Όνομα αρχείου
+            # -------------------------
 
             surname = data.get(
                 "ΕΠΩΝΥΜΟ",
@@ -243,62 +218,40 @@ def create_documents():
 
             if surname or name:
 
-                filename = (
-                    f"{VERSION}_"
-                    f"{surname}_{name}"
-                )
+                filename = f"{surname}_{name}"
 
                 if am:
                     filename += f"_{am}"
 
             else:
 
-                filename = (
-                    f"{VERSION}_"
-                    f"ΕΓΓΡΑΦΟ_{row_number}"
-                )
+                filename = f"ΕΓΓΡΑΦΟ_{row_number}"
 
             filename = safe_filename(
                 filename
             ) + ".docx"
 
-            output_path = os.path.abspath(
-                os.path.join(
-                    output_folder,
-                    filename
-                )
+            output_path = os.path.join(
+                output_folder,
+                filename
             )
 
+            # Αν υπάρχει ήδη, το αντικαθιστούμε
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-            doc.SaveAs2(
-                output_path,
-                FileFormat=16
-            )
-
-            doc.Close(
-                SaveChanges=False
+            doc.save(
+                output_path
             )
 
             created += 1
 
-        word.Quit()
-        word = None
-
         messagebox.showinfo(
             "Ολοκληρώθηκε",
-            f"Έκδοση {VERSION}\n\n"
             f"Δημιουργήθηκαν {created} έγγραφα."
         )
 
     except Exception as e:
-
-        if word is not None:
-            try:
-                word.Quit()
-            except:
-                pass
 
         messagebox.showerror(
             "Σφάλμα",
@@ -313,17 +266,18 @@ def create_documents():
 root = tk.Tk()
 
 root.title(
-    f"Excel → Word Merge {VERSION}"
+    "Excel → Word Merge"
 )
 
 root.geometry(
-    "700x330"
+    "700x320"
 )
 
 root.resizable(
     False,
     False
 )
+
 
 excel_var = tk.StringVar()
 template_var = tk.StringVar()
@@ -332,14 +286,16 @@ output_var = tk.StringVar()
 
 tk.Label(
     root,
-    text=f"Δημιουργία ατομικών εγγράφων — {VERSION}",
+    text="Δημιουργία ατομικών εγγράφων",
     font=("Arial", 16, "bold")
 ).pack(
     pady=18
 )
 
 
-frame = tk.Frame(root)
+frame = tk.Frame(
+    root
+)
 
 frame.pack(
     fill="x",
@@ -347,6 +303,7 @@ frame.pack(
 )
 
 
+# Excel
 tk.Button(
     frame,
     text="Επιλογή Excel",
@@ -369,6 +326,7 @@ tk.Entry(
 )
 
 
+# Word
 tk.Button(
     frame,
     text="Επιλογή Word Template",
@@ -391,6 +349,7 @@ tk.Entry(
 )
 
 
+# Output
 tk.Button(
     frame,
     text="Φάκελος αποθήκευσης",
@@ -413,6 +372,7 @@ tk.Entry(
 )
 
 
+# Δημιουργία
 tk.Button(
     root,
     text="ΔΗΜΙΟΥΡΓΙΑ ΕΓΓΡΑΦΩΝ",
