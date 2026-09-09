@@ -127,7 +127,14 @@ def create_documents():
             "Επίλεξε Excel, Word Template και φάκελο αποθήκευσης."
         )
         return
+        
+    # Δημιουργία υποφακέλων WORD και PDF
+    word_folder = os.path.join(output_folder, "WORD")
+    pdf_folder = os.path.join(output_folder, "PDF")
 
+    os.makedirs(word_folder, exist_ok=True)
+    os.makedirs(pdf_folder, exist_ok=True)
+    
     try:
 
         wb = load_workbook(
