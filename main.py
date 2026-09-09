@@ -52,82 +52,13 @@ def clean_value(value):
 
 
 def replace_in_paragraph(paragraph, replacements):
-    """
-    Αντικαθιστά placeholders όπως [ΕΠΩΝΥΜΟ]
-    ακόμη κι αν το Word τα έχει χωρίσει σε πολλά runs.
-
-    Δεν ξαναγράφει ολόκληρη την παράγραφο,
-    ώστε να διατηρούνται όσο γίνεται η μορφοποίηση,
-    η σειρά του κειμένου και τα κενά.
-    """
+    full_text = paragraph.text
 
     for placeholder, value in replacements.items():
+        full_text = full_text.replace(placeholder, str(value))
 
-        while placeholder in paragraph.text:
-
-            full_text = "".join(run.text for run in paragraph.runs)
-
-            start = full_text.find(placeholder)
-
-            if start == -1:
-                break
-
-            end = start + len(placeholder)
-
-            current_pos = 0
-
-            start_run = None
-            start_offset = None
-
-            end_run = None
-            end_offset = None
-
-            for i, run in enumerate(paragraph.runs):
-
-                run_start = current_pos
-                run_end = current_pos + len(run.text)
-
-                if start_run is None and start < run_end:
-                    start_run = i
-                    start_offset = start - run_start
-
-                if end_run is None and end <= run_end:
-                    end_run = i
-                    end_offset = end - run_start
-                    break
-
-                current_pos = run_end
-
-            if start_run is None or end_run is None:
-                break
-
-            # Το placeholder βρίσκεται ολόκληρο σε ένα run
-            if start_run == end_run:
-
-                run = paragraph.runs[start_run]
-
-                before = run.text[:start_offset]
-                after = run.text[end_offset:]
-
-                run.text = before + str(value) + after
-
-            # Το placeholder είναι σπασμένο σε πολλά runs
-            else:
-
-                first_run = paragraph.runs[start_run]
-                last_run = paragraph.runs[end_run]
-
-                before = first_run.text[:start_offset]
-                after = last_run.text[end_offset:]
-
-                first_run.text = before + str(value)
-
-                # Καθαρίζουμε τα ενδιάμεσα runs
-                for i in range(start_run + 1, end_run):
-                    paragraph.runs[i].text = ""
-
-                # Κρατάμε οτιδήποτε υπήρχε μετά το placeholder
-                last_run.text = after
+    if full_text != paragraph.text:
+        paragraph.text = full_text
 
 
 def replace_everywhere(doc, replacements):
